@@ -1,0 +1,27 @@
+
+| Folder                                        | Purpose (in short)                                                      |
+| --------------------------------------------- | ----------------------------------------------------------------------- |
+| **/bin**                                      | Basic user commands (like `ls`, `cp`, `mv`) needed in single-user mode. |
+| **/sbin**                                     | System admin commands (like `mount`, `fsck`, `ifconfig`).               |
+| **/boot**                                     | Kernel (`vmlinuz`), initramfs, GRUB files — needed to boot Linux.       |
+| **/dev**                                      | Device files (e.g., `/dev/sda`, `/dev/null`) representing hardware.     |
+| **/etc**                                      | System configuration files.                                             |
+| **/home**                                     | Users’ personal directories (`/home/asit`).                             |
+| **/lib**, **/lib32**, **/lib64**, **/libx32** | Shared libraries for programs in `/bin` and `/sbin`.                    |
+| **/media**, **/mnt**                          | Mount points for removable drives or temporary mounts.                  |
+| **/opt**                                      | Optional or third-party software.                                       |
+| **/proc**                                     | Virtual filesystem exposing kernel and process info.                    |
+| **/root**                                     | Home directory of the root (admin) user.                                |
+| **/run**                                      | Runtime data (like PID files, sockets).                                 |
+| **/srv**                                      | Data for services (like web/ftp servers).                               |
+| **/sys**                                      | Virtual filesystem showing kernel–device relations.                     |
+| **/tmp**                                      | Temporary files (cleared at reboot).                                    |
+| **/usr**                                      | User programs, libraries, documentation.                                |
+| **/var**                                      | Variable data — logs, mail, caches, spools.                             |
+
+---
+
+👉 **Remember:**
+`/` = root of filesystem tree
+Everything starts from `/` — all other directories hang under it.
+

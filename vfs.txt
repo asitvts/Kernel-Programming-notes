@@ -1,0 +1,141 @@
+struct dentry {
+    atomic_t d_count;              // Reference count
+    unsigned int d_flags;          // Status flags
+    struct inode *d_inode;         // Pointer to associated inode
+    struct dentry *d_parent;       // Pointer to parent dentry
+    struct qstr d_name;            // Name of this dentry (directory entry)
+    struct list_head d_subdirs;    // List of child dentries
+    struct dentry_operations *d_op; // Optional dentry-specific operations
+    struct super_block *d_sb;      // Filesystem this dentry belongs to
+    ...
+};
+
+
+
+          +-----------------------+
+          |      Namespace        |   <-- Isolation boundary
+          |  (e.g., Mount NS)     |
+          |                       |
+          |   +----------------+  |
+          |   |  Superblock    |  |   <-- Filesystem in this namespace
+          |   | (filesystem)   |  |
+          |   +----------------+  |
+          |          |             |
+          |   +--------------+     |
+          |   |   Inode      |     |  <-- Files/dirs inside the FS
+          |   +--------------+     |
+          |          |             |
+          |   +--------------+     |
+          |   |   Dentry     |     |  <-- Name ↔ inode mapping
+          |   +--------------+     |
+          +-----------------------+
+
+               +------------+
+               |   File     |     <-- Open file handle (process scoped)
+               | (open fd)  |
+               +------------+
+
+
+
+
+The **Virtual File System (VFS)** in Linux is a brilliant example of how **Object-Oriented Programming (OOP) principles** can be applied in **C**, even though C is not an object-oriented language.
+
+---
+
+## 🔧 What is VFS?
+
+The **Virtual File System** is an **abstraction layer** in the Linux kernel that allows **different filesystem types** (ext4, xfs, nfs, etc.) to be accessed through a **common interface**.
+
+---
+
+## 🧠 VFS and OOP Principles
+
+Here’s how VFS reflects key **OOP concepts**:
+
+---
+
+### 1. **Abstraction**
+
+**What it means in OOP:**
+Hiding implementation details and exposing only the required interface.
+
+**How VFS uses it:**
+VFS provides a **unified interface** (`open()`, `read()`, `write()`, etc.) to user space, **regardless of the underlying filesystem** (e.g., ext4 or NFS).
+User programs don’t need to know what filesystem is behind `/home`.
+
+➡️ **You interact with files, not the specific filesystem implementation.**
+
+---
+
+### 2. **Encapsulation**
+
+**What it means in OOP:**
+Grouping related data and functions into objects, hiding internal structure.
+
+**How VFS uses it:**
+
+VFS defines **structs** (like `struct inode`, `struct file`, `struct dentry`) that bundle:
+
+* Data fields (like inode number, permissions)
+* Function pointers for operations (like `read`, `write`, `mkdir`)
+
+These structs act like **classes** in OOP, encapsulating both data and behavior.
+
+---
+
+### 3. **Polymorphism**
+
+**What it means in OOP:**
+Different objects can be accessed through the same interface, and can respond differently.
+
+**How VFS uses it:**
+
+Each filesystem (ext4, xfs, etc.) registers its own implementation of operations (via function pointers).
+
+For example:
+
+
+struct file_operations {
+    ssize_t (*read)(struct file *, char __user *, size_t, loff_t *);
+    ssize_t (*write)(struct file *, const char __user *, size_t, loff_t *);
+    ...
+};
+
+So, calling `read()` on a file might:
+
+* Read from disk (ext4)
+* Call a network operation (NFS)
+* Fetch data from memory (tmpfs)
+
+➡️ Same function call, **different behavior depending on the underlying filesystem**.
+
+---
+
+### 4. **Inheritance** (to a limited degree)
+
+**What it means in OOP:**
+One class can inherit properties and behaviors from another.
+
+**In VFS:**
+C doesn’t support inheritance directly, but the kernel **simulates it** using **struct embedding**.
+
+Example:
+
+
+struct super_block {
+    ...
+    struct file_system_type *s_type; // Points to the filesystem (like ext4, tmpfs)
+};
+
+
+Each filesystem defines its own operations and "inherits" the VFS interface by providing implementations.
+
+➡️ You can think of all filesystems as **"subclasses"** of a base "Filesystem" class defined by VFS.
+
+
+
+
+
+
+
+

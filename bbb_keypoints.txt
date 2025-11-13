@@ -1,0 +1,69 @@
+BeagleBoard is an open-source single-board computer (SBC) developed by the BeagleBoard.org Foundation, designed primarily for developers, 
+engineers, and researchers who want to explore embedded Linux, hardware interfacing, and low-level system programming
+
+designed for industrial-grade and low-level embedded development, not just for learning or basic projects.
+
+Programmable Real-Time Units (PRUs)
+
+The AM335x SoC in BeagleBone Black includes two 32-bit microcontrollers called PRU-ICSS (Programmable Real-Time Unit and Industrial Communication Subsystem).
+
+These are independent cores that can run real-time tasks (like toggling GPIO pins with nanosecond precision) outside the main Linux OS.
+
+You can use them for:
+
+Precise motor control
+
+Industrial communication (Modbus, Profibus, etc.)
+
+Generating PWM signals
+
+Capturing sensor data in real time
+
+This is something Raspberry Pi cannot do directly, because it doesn’t have such independent real-time cores.
+
+Because of the PRUs and direct memory access to I/O pins, latency is extremely low and deterministic
+
+You can build and flash your own kernel and root filesystem
+
+Bootloader (u-boot), Linux kernel patches, and Debian-based OS images are open-source
+
+Onboard eMMC flash storage** (faster than SD card)
+
+ Developing a custom Linux driver** for a peripheral
+ 
+ Learning bootloader and kernel compilation
+ 
+ 
+ 
+You can:
+
+Change how GPIOs behave (e.g., through device tree or drivers),
+
+Write your own drivers for custom peripherals,
+
+Change scheduler behavior or real-time settings,
+
+Optimize PRU communication.
+
+So yes — you’re changing the SBC’s behavior, because the SBC = hardware + software + OS stack.
+
+But…
+
+🧱 4. You cannot alter the SoC itself
+
+The SoC (AM335x) is physically manufactured silicon —
+you can’t “change” its structure, logic gates, or internal cores through software.
+
+You cannot:
+
+Modify its instruction set (ARM Cortex-A8),
+
+Add more PRUs or GPIO pins,
+
+Rewire its buses or internal cache architecture,
+
+Change its fabrication technology.
+
+These are all fixed at the time of chip manufacturing by TI.
+ 
+
