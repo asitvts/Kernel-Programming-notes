@@ -1,0 +1,343 @@
+
+# ✅ **ARM Processor Registers — Detailed but Easy Explanation**
+
+ARM (especially ARMv7 & ARMv8) follows a **load-store RISC architecture**, so registers are extremely important.
+Let’s break them down cleanly.
+
+---
+
+# 🔵 **1. General Purpose Registers (GPRs)**
+
+ARM traditionally has **16 visible registers (R0–R15)** in ARMv7 (32-bit).
+ARMv8 (AArch64) has **31 GPRs (X0–X30)** — but first let’s understand ARMv7 since it is the classic version taught everywhere.
+
+---
+
+# ⭐ **ARMv7 (32-bit) Registers**
+
+## **R0–R12 → General Purpose Registers**
+
+### **Definition:**
+
+These are **general-use registers** used for arithmetic, data storage, temporary values, function arguments, etc.
+
+### **Easy Hinglish:**
+
+Yeh sab **normal kaam** ke registers hote hain — calculations, values rakhna, temporary storage etc.
+
+**Use cases:**
+
+* R0–R3 → function arguments + return values
+* R4–R11 → callee-saved registers (function ke andar preserve karne hote hain)
+* R12 → Intra-procedure scratch register (IP)
+
+---
+
+# 🔵 **2. Special Purpose Registers**
+
+## **R13 — SP (Stack Pointer)**
+
+### **Definition:**
+
+This register always points to the **top of the stack**.
+
+### **Easy Hinglish:**
+
+Yeh batata hai stack kahaan se start/continue ho raha hai.
+Local variables, return addresses yahin store hote hain.
+
+ARM often has **multiple stack pointers** depending on mode:
+
+* SP_usr
+* SP_svc
+* SP_irq
+* SP_fiq
+* SP_abt
+* SP_und
+
+---
+
+## **R14 — LR (Link Register)**
+
+### **Definition:**
+
+When a function is called (BL instruction), the **return address** is stored in R14 (LR).
+
+### **Easy Hinglish:**
+
+Jab function call hota hai, wapas kahan aana hai — yeh LR mein rakha jata hai.
+C ke equivalent: return address.
+
+Multiple LR versions per mode (LR_svc, LR_irq, etc.)
+
+---
+
+## **R15 — PC (Program Counter)**
+
+### **Definition:**
+
+Holds the address of the currently executing instruction + 8 bytes (because pipeline).
+
+### **Easy Hinglish:**
+
+PC batata hai CPU kaunsi instruction chala raha hai.
+ARM pipeline ke wajah se PC always **current instruction + 8** hota hai (ARMv7).
+
+---
+
+# 🔵 **3. CPSR — Current Program Status Register**
+
+### **Definition:**
+
+This is a **32-bit status register** that holds:
+
+* Condition flags (NZCV)
+* Interrupt disable bits (I/F)
+* Processor mode bits
+* State bits (ARM/Thumb/Jazelle)
+
+### ⭐ Bits Explained:
+
+| Bit       | Meaning     | Easy Hinglish                                              |
+| --------- | ----------- | ---------------------------------------------------------- |
+| **N**     | Negative    | Result negative laga                                       |
+| **Z**     | Zero        | Result zero aaya                                           |
+| **C**     | Carry       | Arithmetic carry                                           |
+| **V**     | Overflow    | Signed overflow                                            |
+| **I**     | IRQ disable | Normal interrupts off                                      |
+| **F**     | FIQ disable | Fast interrupts off                                        |
+| **T**     | Thumb state | Thumb mode active                                          |
+| **M4–M0** | CPU mode    | Kaunsa mode active (User, System, Supervisor, IRQ, FIQ...) |
+
+### **Easy Hinglish:**
+
+CPSR CPU ka **status dashboard** hota hai — CPU kis mode mein hai, interrupts on/off, last result kaise aaya etc.
+
+---
+
+# 🔵 **4. SPSR — Saved Program Status Register**
+
+### **Definition:**
+
+During exceptions (IRQ, FIQ, SVC), ARM stores the **previous CPSR** into SPSR.
+
+### **Easy Hinglish:**
+
+Exception ya interrupt aate hi CPU apna current status SPSR mein save kar deta hai, taaki return karne par purani state wapas a jaye.
+
+Har exception mode ka **alag SPSR hota hai**:
+
+* SPSR_irq
+* SPSR_fiq
+* SPSR_svc
+* SPSR_abt
+* SPSR_und
+
+User mode has **no SPSR**.
+
+---
+
+# 🔵 **5. Banked Registers**
+
+ARM ke kuch registers **mode-specific (banked)** hote hain.
+
+## ⭐ Banked registers list (ARMv7):
+
+| Mode | Banked Registers |
+| ---- | ---------------- |
+| FIQ  | R8_fiq–R14_fiq   |
+| IRQ  | R13_irq, R14_irq |
+| SVC  | R13_svc, R14_svc |
+| ABT  | R13_abt, R14_abt |
+| UND  | R13_und, R14_und |
+
+### **Easy Hinglish:**
+
+Har special mode (IRQ, FIQ) ke apne stack pointer aur link register hote hain.
+FIQ mode ke pass aur bhi extra registers hote hain (R8–R14) taaki fast interrupt handling ho sake.
+
+---
+
+# 🟣 **ARMv8 (AArch64) Registers (Short Overview)**
+
+ARMv8 (64-bit) uses:
+
+* **X0–X30** (31 general purpose 64-bit registers)
+* **SP** (stack pointer)
+* **PC**
+* **PSTATE** (status register, CPSR replacement)
+
+Special ones:
+
+* **X30 = LR**
+* **X31** is either **SP** or a zero register depending on context.
+
+---
+
+# 🟢 **Summary (Super Easy)**
+
+### ✔ R0–R12 → normal registers
+
+### ✔ R13 → SP
+
+### ✔ R14 → LR
+
+### ✔ R15 → PC
+
+### ✔ CPSR → Status + flags
+
+### ✔ SPSR → Exception return state
+
+### ✔ Banked registers → different versions per mode
+
+### ✔ ARMv8 → X0–X30 (64-bit)
+
+---
+
+If you want, I can also explain:
+
+✅ **ARM pipeline (3-stage / 5-stage)**
+✅ **Thumb vs ARM instruction set**
+✅ **Examples of register usage in assembly**
+✅ **Diagram of ARM register banking**
+
+Just tell me!
+
+
+
+**No — every mode does *not* get its own copy of *all* registers.**
+
+ARM gives **each mode its own copy of only *some* registers**, not all.
+
+This is *exactly* what “banked registers” means.
+
+Let’s explain this cleanly.
+
+---
+
+# ✅ **Do all modes get all registers privately?**
+
+**NO.**
+Only a *small subset* of registers are banked (private) per mode.
+
+Most registers are **shared** between modes.
+
+---
+
+# 🧠 **ARM Register Sharing vs Banking (Easy Hinglish)**
+
+## ✔ **Shared Registers**
+
+These registers are **same for all modes**:
+
+```
+R0 – R7   (Always shared)
+```
+
+Meaning:
+If User mode writes to R1, Supervisor mode will also see that value.
+
+---
+
+## ✔ **Partially Banked Registers**
+
+Some registers have multiple versions **per mode**:
+
+```
+R8 – R12   (Shared for most modes)
+           BUT FIQ mode gets its own copies
+```
+
+---
+
+## ✔ **Fully Banked Registers** (per mode)
+
+Some registers have **private copies for each mode**:
+
+```
+R13 (SP)  – Each mode has its own SP
+R14 (LR)  – Each mode has its own LR
+SPSR      – Each mode except User/System has its own SPSR
+```
+
+So IRQ mode has:
+
+* R13_irq (SP used only by IRQ)
+* R14_irq (LR used only by IRQ)
+* SPSR_irq
+
+FIQ mode has:
+
+* R8_fiq – R14_fiq (its own FAST registers)
+* SPSR_fiq
+
+Supervisor has:
+
+* R13_svc
+* R14_svc
+* SPSR_svc
+
+And so on.
+
+---
+
+# 🔵 **Complete Table — Who Gets What?**
+
+| Mode             | Private SP | Private LR | Private R8–R12? | Private SPSR |
+| ---------------- | ---------- | ---------- | --------------- | ------------ |
+| User             | ❌          | ❌          | ❌               | ❌            |
+| System           | ❌          | ❌          | ❌               | ❌            |
+| Supervisor (SVC) | ✔          | ✔          | ❌               | ✔            |
+| IRQ              | ✔          | ✔          | ❌               | ✔            |
+| FIQ              | ✔          | ✔          | ✔**(R8–R12)**   | ✔            |
+| Abort (ABT)      | ✔          | ✔          | ❌               | ✔            |
+| Undefined (UND)  | ✔          | ✔          | ❌               | ✔            |
+
+---
+
+# ⭐ Final Summary (Super Easy Hinglish)
+
+### ❌ Not all registers are banked
+
+### ✔ Only some registers get private copies
+
+### ✔ R0–R7 = shared by all modes
+
+### ✔ R8–R12 = only FIQ mode gets private copies
+
+### ✔ R13 (SP) and R14 (LR) = every privileged mode gets its own
+
+### ✔ SPSR = every privileged mode has one
+
+---
+
+# 🧠 Mental Model
+
+Think of ARM as having:
+
+* **Shared registers** (everyone uses same ones)
+* **Private drawers** (some modes have their own drawer for certain registers)
+
+FIQ gets the most drawers → fastest interrupt handling.
+
+---
+
+If you want, I can also draw a **diagram** showing all banked registers and shared registers visually.
+
+
+
+🧠 List of ARM CPU modes (ARMv7-A)
+
+User (usr)
+
+FIQ (fiq)
+
+IRQ (irq)
+
+Supervisor / SVC
+
+Abort / ABT
+
+Undefined / UND
+
+System / sys
