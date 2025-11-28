@@ -1,0 +1,522 @@
+Below is a **complete, practical, and system-level explanation of `sk_buff` (socket buffer)** — written for **Linux kernel + driver + networking stack understanding**. I’ll keep Hinglish **minimal**, only where it helps intuition.
+
+> ✅ If you truly understand `sk_buff`, you understand **how Linux networking works internally**.
+
+---
+
+# 1. What is `sk_buff`? (Core Definition)
+
+**`sk_buff` is the fundamental data structure used by the Linux networking stack to represent a network packet.**
+
+In simple terms:
+
+> **Every packet inside the Linux kernel = one `struct sk_buff` object**
+
+It is used:
+
+* In **drivers** (Ethernet, WiFi)
+* In **protocol layers** (IP, TCP, UDP)
+* In **netfilter**
+* In **sockets**
+* In **traffic control (TC)**
+
+It is defined in:
+
+```c
+include/linux/skbuff.h
+```
+
+It is used heavily throughout the Linux kernel networking subsystem.
+
+---
+
+# 2. Why does Linux need `sk_buff`?
+
+A raw packet alone is not enough. The kernel also needs:
+
+| Requirement          | Why Needed                    |
+| -------------------- | ----------------------------- |
+| Packet data          | Actual bytes                  |
+| Protocol information | Is it TCP? UDP? IPv6?         |
+| Routing metadata     | Where should it go?           |
+| Device info          | Which NIC received/sent this? |
+| Queue handling       | Scheduling, buffering         |
+| Offload flags        | Checksum offload, GSO         |
+
+So `sk_buff` bundles:
+✅ **Data**
+✅ **Metadata**
+✅ **Control information**
+✅ **Ownership & lifetime**
+
+---
+
+# 3. High-Level Anatomy of `sk_buff`
+
+```c
+struct sk_buff {
+    struct sk_buff *next;
+    struct sk_buff *prev;
+
+    struct sock *sk;
+    struct net_device *dev;
+
+    unsigned char *head;
+    unsigned char *data;
+    unsigned char *tail;
+    unsigned char *end;
+
+    unsigned int len;
+    unsigned int data_len;
+
+    __u16 protocol;
+    __u8 ip_summed;
+
+    skb_frag_t frags[MAX_SKB_FRAGS];
+    
+    ...
+};
+```
+
+Let’s break this properly.
+
+---
+
+# 4. Memory Layout: The MOST Important Concept
+
+```
+|------------------ Allocated Buffer ------------------|
+head                                             end
+|------------------------------------------------------|
+       ^data -----------------> ^tail
+```
+
+### These four pointers define everything:
+
+| Pointer | Meaning                    |
+| ------- | -------------------------- |
+| `head`  | Start of allocated memory  |
+| `data`  | Start of valid packet data |
+| `tail`  | End of valid packet data   |
+| `end`   | End of allocated memory    |
+
+### Core relationships:
+
+```text
+len = tail - data
+room at start = data - head   (headroom)
+room at end   = end - tail    (tailroom)
+```
+
+---
+
+# 5. Headroom and Tailroom (Critical for Drivers)
+
+### Headroom
+
+Space **before** packet data → used to **prepend headers**
+
+Example:
+
+* Driver receives raw frame
+* IP stack adds IP header using `skb_push()`
+* TCP adds TCP header using `skb_push()`
+
+### Tailroom
+
+Space **after** packet data → used to **append**
+
+Example:
+
+* Adding Ethernet FCS
+* Appending padding
+
+### Functions:
+
+```c
+skb_headroom(skb)
+skb_tailroom(skb)
+```
+
+---
+
+# 6. Linear vs Non-Linear `sk_buff`
+
+This is extremely important for **performance & zero-copy**.
+
+---
+
+## 6.1 Linear SKB
+
+All data is in one contiguous buffer:
+
+```
+[data.................]
+```
+
+Properties:
+
+* `data_len == 0`
+* All bytes between `data` → `tail`
+* Easy to parse
+* Used by drivers and protocol stack
+
+---
+
+## 6.2 Non-Linear SKB (Fragmented)
+
+Used for:
+
+* Page-backed data
+* Zero-copy
+* High-speed networking
+
+Layout:
+
+```
+[data (header only)]  +  frag1 + frag2 + frag3
+```
+
+Fields involved:
+
+```c
+skb->data_len        // total size of fragments
+skb->len             // total packet size (linear + frags)
+skb_shinfo(skb)->frags[]
+skb_shinfo(skb)->nr_frags
+```
+
+✅ Header is linear
+✅ Payload is scattered
+✅ Saves memory copy
+✅ Used in high-speed NICs
+
+---
+
+# 7. How SKBs are Allocated
+
+### 7.1 Normal allocation
+
+```c
+struct sk_buff *skb = alloc_skb(size, GFP_KERNEL);
+```
+
+This:
+
+* Allocates sk_buff struct
+* Allocates data buffer
+* `data == tail == head`
+
+---
+
+### 7.2 Receive Path Allocation (Drivers)
+
+```c
+struct sk_buff *skb = netdev_alloc_skb(dev, size);
+```
+
+Used in:
+
+* Ethernet drivers
+* WiFi drivers
+
+Optimized for DMA.
+
+---
+
+### 7.3 SKB with reserved headroom
+
+```c
+skb_reserve(skb, 64);
+```
+
+Used before:
+
+* Adding headers
+* Protocol stack usage
+
+---
+
+# 8. Adding and Removing Data
+
+These manipulate `data` and `tail`.
+
+| Function             | Action                                |
+| -------------------- | ------------------------------------- |
+| `skb_put(skb, len)`  | Append data (move `tail` forward)     |
+| `skb_push(skb, len)` | Prepend header (move `data` backward) |
+| `skb_pull(skb, len)` | Remove header (move `data` forward)   |
+| `skb_trim(skb, len)` | Shrink packet                         |
+
+### Example: Ethernet → IP
+
+```c
+skb_pull(skb, ETH_HLEN);   // Remove Ethernet header
+```
+
+---
+
+# 9. Protocol Tracking Inside SKB
+
+Each layer sets protocol info inside the skb.
+
+| Field                       | Meaning              |
+| --------------------------- | -------------------- |
+| `skb->protocol`             | ETH_P_IP, ETH_P_IPV6 |
+| `skb_network_header(skb)`   | Pointer to IP header |
+| `skb_transport_header(skb)` | Pointer to TCP/UDP   |
+| `skb_mac_header(skb)`       | Pointer to Ethernet  |
+
+Setting using:
+
+```c
+skb_reset_mac_header(skb);
+skb_set_network_header(skb, offset);
+skb_set_transport_header(skb, offset);
+```
+
+---
+
+# 10. Transmit Path (TX Flow)
+
+```
+Application
+ → Socket
+ → TCP
+ → IP
+ → qdisc
+ → dev_queue_xmit()
+ → Network Driver
+ → DMA to NIC
+```
+
+Driver sends skb using:
+
+```c
+dev_kfree_skb(skb);   // after TX completion
+```
+
+---
+
+# 11. Receive Path (RX Flow)
+
+```
+NIC → DMA → Driver → napi_gro_receive()
+ → IP → TCP → Socket → User Space
+```
+
+Driver does:
+
+```c
+netif_receive_skb(skb);
+```
+
+or via NAPI:
+
+```c
+napi_gro_receive(&napi, skb);
+```
+
+---
+
+# 12. Cloning vs Copying SKBs
+
+This is vital for performance.
+
+---
+
+## 12.1 `skb_clone()` (Fast, Zero-Copy)
+
+* Data buffer is **shared**
+* Only metadata is duplicated
+* Reference count increases
+
+Use when:
+✅ Mirroring packets
+✅ Netfilter
+✅ Traffic control
+
+---
+
+## 12.2 `skb_copy()` (Deep Copy)
+
+* New skb
+* New independent data buffer
+* Safe but slow
+
+Use when:
+✅ Modifying packet data without affecting original
+
+---
+
+# 13. Ownership and Lifetime Rules
+
+One skb is **owned by exactly one subsystem at a time**.
+
+### Freeing:
+
+| Function             | When to Use                  |
+| -------------------- | ---------------------------- |
+| `kfree_skb(skb)`     | Normal freeing               |
+| `dev_kfree_skb(skb)` | Driver TX completion         |
+| `consume_skb(skb)`   | When already partially freed |
+
+⚠️ **Never free the same skb twice. Kernel crash guaranteed.**
+
+---
+
+# 14. Checksum Handling
+
+Field:
+
+```c
+skb->ip_summed
+```
+
+| Value                  | Meaning               |
+| ---------------------- | --------------------- |
+| `CHECKSUM_NONE`        | Software must compute |
+| `CHECKSUM_UNNECESSARY` | NIC already verified  |
+| `CHECKSUM_PARTIAL`     | NIC will compute      |
+
+High-speed NICs use:
+✅ TX checksum offload
+✅ RX checksum offload
+
+---
+
+# 15. GSO, GRO, and TSO
+
+Used for **packet aggregation & segmentation offloading**.
+
+| Feature | Meaning                      |
+| ------- | ---------------------------- |
+| GSO     | Generic Segmentation Offload |
+| TSO     | TCP Segmentation Offload     |
+| GRO     | Generic Receive Offload      |
+
+Fields inside:
+
+```c
+skb_shinfo(skb)->gso_size
+skb_shinfo(skb)->gso_type
+```
+
+Used to:
+✅ Reduce CPU load
+✅ Increase throughput
+
+---
+
+# 16. Queueing: How SKBs are Stored
+
+SKBs are queued using:
+
+```c
+struct sk_buff_head queue;
+```
+
+Operations:
+
+```c
+skb_queue_tail(&queue, skb);
+skb_dequeue(&queue);
+skb_queue_len(&queue);
+```
+
+Used in:
+
+* Socket receive buffers
+* TX queues
+* Traffic control (qdisc)
+
+---
+
+# 17. SKB and Sockets Relation
+
+Field:
+
+```c
+skb->sk   // owning socket
+```
+
+Used for:
+
+* TCP retransmission
+* Flow control
+* Memory accounting
+
+Socket memory usage depends directly on SKBs.
+
+---
+
+# 18. SKB in Network Drivers (Very Important for You)
+
+### RX side:
+
+```c
+skb = netdev_alloc_skb(dev, 2048);
+dma sync
+skb_put(skb, len);
+skb->protocol = eth_type_trans(skb, dev);
+netif_receive_skb(skb);
+```
+
+### TX side:
+
+```c
+dma map skb->data
+dev_queue_xmit(skb)
+```
+
+Driver never interprets TCP/IP. It only:
+✅ handles DMA
+✅ fills skb
+✅ submits to stack
+
+---
+
+# 19. Common Bugs Related to SKB
+
+| Bug                        | Result              |
+| -------------------------- | ------------------- |
+| Forgetting `skb_reserve()` | Header overwrite    |
+| Double free                | Kernel panic        |
+| Using freed skb            | Use-after-free      |
+| Wrong `skb_put()` size     | Memory corruption   |
+| Modifying cloned skb       | Corrupts other copy |
+
+---
+
+# 20. Mental Model You Must Keep
+
+> **`sk_buff` = Packet + Metadata + Routing + Ownership + Lifetime Control**
+
+It is:
+
+* The **currency** of Linux networking
+* The **unit of movement**
+* The **object passed between all layers**
+
+---
+
+# 21. Summary Table (Exam + Interview Gold)
+
+| Concept            | Core Meaning            |
+| ------------------ | ----------------------- |
+| sk_buff            | Kernel packet container |
+| head/data/tail/end | Packet memory layout    |
+| headroom           | Space for headers       |
+| tailroom           | Space for append        |
+| skb_put/push/pull  | Add/remove data         |
+| Linear skb         | Contiguous packet       |
+| Non-linear skb     | Fragmented packet       |
+| skb_clone          | Fast metadata copy      |
+| skb_copy           | Deep copy               |
+| GRO/GSO            | Offloading              |
+| kfree_skb          | Free skb                |
+
+---
+
+
+
