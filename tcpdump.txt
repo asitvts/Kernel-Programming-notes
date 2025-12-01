@@ -1,0 +1,150 @@
+Sure! Let’s break down **how tcpdump works** in detail, step by step, in a way that covers both the **user space perspective** and the **kernel/network stack perspective**.
+
+---
+
+# **1. What tcpdump is**
+
+* `tcpdump` is a **packet sniffing tool** for Linux and Unix systems.
+* It captures packets **passing through network interfaces**.
+* It uses **libpcap** library (Packet Capture library) to interact with the kernel.
+* It works in **user space**, but relies on kernel hooks to see packets.
+
+---
+
+# **2. How it interacts with the kernel**
+
+1. **Select an interface** (`-i eth0`, `-i lo`, etc.)
+2. **Open a raw socket** or **PF_PACKET socket** (kernel-level socket that gets all packets at a given interface).
+3. **Sets promiscuous mode** (optional)
+
+   * Allows capturing all packets on the interface, even not destined for the host.
+4. **Kernel hooks into the network stack**
+
+   * Every packet that passes through the interface is copied to the PF_PACKET socket buffer.
+5. **Packets are queued to user space** via the socket.
+
+---
+
+# **3. The packet capture flow**
+
+### **Step-by-step**
+
+1. **Packet arrives at NIC / Loopback interface**
+
+   * For physical NIC: received via DMA into RX ring buffer.
+   * For loopback: packet stays in kernel memory.
+
+2. **Packet processed by kernel network stack**
+
+   * Ethernet → IP → TCP/UDP/ICMP.
+   * Even if it is loopback, it goes through the IP layer.
+
+3. **pf_packet socket copies packet**
+
+   * The kernel **copies a copy of the `sk_buff`** to the PF_PACKET socket buffer.
+   * This is independent of the actual delivery to application sockets.
+
+4. **libpcap reads from PF_PACKET socket**
+
+   * `tcpdump` calls libpcap, which **pulls packets** from the kernel socket buffer.
+
+5. **Packet filtering (BPF)**
+
+   * If you give a filter (`host 127.0.0.1`, `port 80`), **kernel applies BPF (Berkeley Packet Filter)** to select only relevant packets.
+   * This reduces overhead — only matching packets are delivered to user space.
+
+6. **User-space display**
+
+   * `tcpdump` formats the packet in human-readable form.
+   * Verbose options (`-v`, `-nn`, etc.) add IPs, ports, flags, timestamps, etc.
+
+---
+
+# **4. Key Components**
+
+| Component            | Role                                                                |
+| -------------------- | ------------------------------------------------------------------- |
+| NIC / `lo`           | Receives or sends packets                                           |
+| Kernel Network Stack | Processes packets (Ethernet → IP → TCP/UDP/ICMP)                    |
+| `sk_buff`            | Kernel structure holding packet data and metadata                   |
+| PF_PACKET Socket     | Special socket that receives **all packets** at the interface level |
+| libpcap              | User-space library, reads from PF_PACKET socket, applies filters    |
+| tcpdump              | Formats and prints the packet to terminal                           |
+
+---
+
+# **5. Promiscuous mode (optional)**
+
+* Normally, NIC only sends packets destined to the host to the kernel.
+* Promiscuous mode allows **capturing all packets on the network segment**.
+* Example:
+
+  ```
+  sudo tcpdump -i eth0 -p
+  ```
+
+  `-p` disables promiscuous mode; default is enabled.
+
+---
+
+# **6. Packet filtering**
+
+* `tcpdump` uses **BPF (Berkeley Packet Filter)**.
+* Can filter by:
+
+  * IP (`host 8.8.8.8`)
+  * Port (`port 80`)
+  * Protocol (`icmp`, `tcp`, `udp`)
+* BPF filters are applied **in the kernel**, before the packet reaches user-space, for efficiency.
+
+---
+
+# **7. Example flow for loopback ping**
+
+1. `ping 127.0.0.1`
+2. Kernel creates `sk_buff` with ICMP echo request.
+3. `sk_buff` goes through IP → ICMP → loopback interface.
+4. PF_PACKET socket (tcpdump) **receives a copy** of the `sk_buff`.
+5. Kernel applies BPF filter (if any).
+6. User-space `tcpdump` reads packet and prints:
+
+   ```
+   127.0.0.1 > 127.0.0.1: ICMP echo request
+   127.0.0.1 > 127.0.0.1: ICMP echo reply
+   ```
+
+---
+
+# **8. Why tcpdump sees packets even if your app doesn’t**
+
+* Because PF_PACKET socket **gets a copy of all packets**.
+* This is why `tcpdump` can see:
+
+  * Outgoing packets before they leave the NIC
+  * Incoming packets before they reach application sockets
+
+---
+
+# **9. Important Notes**
+
+* `tcpdump` is **read-only**; it does not interfere with actual packet delivery.
+* Only **kernel buffers (`sk_buff`) are copied** to user space.
+* For high-speed networks, large capture buffers may be needed to avoid packet drops (`-s 262144`).
+
+---
+
+✅ **Summary Flow Diagram (Textual)**
+
+```
+Network Interface (NIC / lo)
+      ↓ (packet arrives)
+Kernel Network Stack
+      ↓ (sk_buff created)
+PF_PACKET socket (copy of sk_buff)
+      ↓ (BPF filter applied)
+libpcap (user-space buffer)
+      ↓
+tcpdump prints formatted output
+```
+
+
