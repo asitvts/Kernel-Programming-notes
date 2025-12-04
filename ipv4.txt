@@ -224,7 +224,7 @@ Now the network stack knows:
 | 0x0800    | **ip_rcv()** |
 | 0x86DD    | ipv6_rcv()   |
 | 0x0806    | arp_rcv()    |
-| …         | many others  |
+
 
 ---
 
@@ -504,11 +504,11 @@ basically
 
                            MULTI-BYTE OPTION
 ┌────────────────────────────────────────────────────────────┐
-│                        Option Type                          │
-│ 7        6 5           4 3 2 1 0                            │
-│+----------+--------------+---------------------------------+│
-│| Copied=0 | Class=00     | Number=xxxxx                    |│
-│+----------+--------------+---------------------------------+│
+│                        Option Type    8bit                 │
+│                                                            │
+│+----------+--------------+---------------------------------+
+│| Copied=0 | Class=00     | Number=xxxxx                    |
+│+----------+--------------+---------------------------------+
 └────────────────────────────────────────────────────────────┘
 ┌────────────────────────┐
 │ Length (total bytes)   │  1 byte
@@ -517,10 +517,87 @@ basically
 │ Pointer / Offset       │  1 byte
 └────────────────────────┘
 ┌────────────────────────────────────────────────────────────┐
-│                    Option Data (varies)                     │
+│                    Option Data (varies)                    │
 └────────────────────────────────────────────────────────────┘
 
 
+3 types of timestamp flags 
+
+
+tsandaddr
+ping -T tsandaddr 127.0.0.1
+PING 127.0.0.1 (127.0.0.1) 56(124) bytes of data.
+64 bytes from 127.0.0.1: icmp_seq=1 ttl=64 time=0.019 ms
+TS: 	127.0.0.1	40871938 absolute
+	127.0.0.1	0
+	127.0.0.1	0
+	127.0.0.1	0
+
+tsprespec
+ ✘  asit   main  ping -T tsprespec 127.0.0.1
+PING 127.0.0.1 (127.0.0.1) 56(124) bytes of data.
+64 bytes from 127.0.0.1: icmp_seq=1 ttl=64 time=0.020 ms
+64 bytes from 127.0.0.1: icmp_seq=2 ttl=64 time=0.019 ms
+
+
+tsonly
+ping -T tsonly 127.0.0.1
+PING 127.0.0.1 (127.0.0.1) 56(124) bytes of data.
+64 bytes from 127.0.0.1: icmp_seq=1 ttl=64 time=0.023 ms
+TS: 	40812077 absolute
+	0
+	0
+	0
+
+
+
+
+# ✅ **IPv4 Timestamp Option (IPOPT_TIMESTAMP) — Key Points**
+
+* Defined in **RFC 781**.
+* Stores **timestamps** (32-bit, milliseconds since midnight UTC).
+* Can store:
+
+  * Only timestamps, or
+  * IP address + timestamp pairs.
+* Records timestamps of routers along the path.
+* **Maximum total option length:** **40 bytes**.
+* **Not copied** into fragments → appears **only in the first fragment**.
+* Structure begins with:
+
+  * **Type (1 byte)**
+  * **Length (1 byte)**
+  * **Pointer (1 byte)**
+* **Fourth byte:**
+
+  * Upper 4 bits = **overflow counter** (incremented when no space is left to add another entry).
+* If overflow counter > 15 → send **ICMP Parameter Problem** back to sender.
+
+
+
+
+✅ Strict Source Route (SSRR)
+
+Packet must pass through each router exactly in the specified order.
+
+No other routers are allowed between the listed hops.
+
+If the next hop is not directly reachable, the packet is dropped.
+
+Very strict path control.
+
+Think: “Follow this exact path, step by step.”
+
+✅ Loose Source Route (LSRR)
+
+Packet must pass through the listed routers, but
+
+It may use any routers in between the listed ones.
+
+Next hop does not need to be directly reachable.
+
+More flexible path control.
+Even though LSRR allows any routers in between, the packet must still visit the listed routers in the exact sequence given.
 
 
 
@@ -528,11 +605,13 @@ basically
 
 
 
-
-
-
-
-
+The command-line utility ping –R uses the Record Route IP Option. Note that
+the IPv4 header is only large enough for nine such routes (or even less, if more options are used). When the header is
+full and there is no room to insert an additional address, the datagram is forwarded without inserting the address to
+the IP options.
+Though ping –R uses the Record Route IP Option, in many cases, if you will try it, you will not get the expected
+result of all the network nodes along the way, because for security reasons many network nodes ignore this IP option.
+The manpage of ping mentions this explicitly.
 
 
 
