@@ -427,16 +427,7 @@ In fragmentation, the kernel:
 
 ---
 
-# ✅ **Option Classes**
 
-The option type byte also contains a **2-bit class field**:
-
-| Bits | Meaning               |
-| ---- | --------------------- |
-| 00   | Control (most common) |
-| 01   | Reserved1             |
-| 10   | Debug/measurement     |
-| 11   | Reserved2             |
 
 In Linux:
 
@@ -462,7 +453,7 @@ Each option has one of these two formats:
 
 Either this 
 +----------------------+
-| Option Type (1 byte) |
+| Option Type (8 bits) |
 +----------------------+
 Used only for:
 
@@ -492,7 +483,18 @@ inside option type byte
       |Copied (1 bit)  |   Class (2 bits)  |  Number (5 bits) |
       +--------+----------------------------------------------+
 
+# ✅ **Option Classes**
 
+The option type byte also contains a **2-bit class field**:
+
+| Bits | Meaning               |
+| ---- | --------------------- |
+| 00   | Control (most common) |
+| 01   | Reserved1             |
+| 10   | Debug/measurement     |
+| 11   | Reserved2             |
+
+only timestamp is used for measurement
 
 
 
