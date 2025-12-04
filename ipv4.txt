@@ -148,7 +148,192 @@ The old ToS meaning (precedence, delay, throughput, reliability) is no longer us
 * **6 bits**: DSCP (QoS classification)
 * **2 bits**: ECN (congestion notification)
 
+
+
+
+
+
+
+
+# ✅ **Context**
+
+When an Ethernet frame arrives (e.g., from a NIC):
+
+* The NIC driver hands the frame to the kernel network stack.
+* The frame has an **Ethernet header**, which contains a **EtherType** field (2 bytes):
+
+```
+0x0800 → IPv4
+0x86DD → IPv6
+0x0806 → ARP
+0x8847 → MPLS
+...
+```
+
+This EtherType value tells the kernel **which protocol handler should process the payload**.
+
 ---
 
-If you want, I can draw a clear ASCII diagram showing the old vs new layouts inside the IPv4 header.
+# 🟦 **How Linux Registers IPv4 Packet Handler**
+
+You saw this:
+
+```c
+static struct packet_type ip_packet_type __read_mostly = {
+    .type = cpu_to_be16(ETH_P_IP),
+    .func = ip_rcv,
+};
+```
+
+Let’s decode it:
+
+### ✔ `.type = cpu_to_be16(ETH_P_IP)`
+
+ETH_P_IP is defined as:
+
+```c
+#define ETH_P_IP 0x0800
+```
+
+`cpu_to_be16()` ensures the constant is stored in **big-endian**, because EtherType on the wire is big-endian.
+
+So Linux is saying:
+
+> “If you see a frame whose EtherType == 0x0800 (IPv4), call ip_rcv().”
+
+### ✔ `.func = ip_rcv`
+
+`ip_rcv()` is the **IPv4 receive handler** — the entry point for the IPv4 Rx path.
+
+---
+
+# 🟩 **Registering the handler: dev_add_pack()**
+
+In `inet_init()` (IPv4 initialization):
+
+```c
+dev_add_pack(&ip_packet_type);
+```
+
+This function registers `ip_packet_type` in the kernel’s **packet handler list**.
+
+Now the network stack knows:
+
+| EtherType | Handler      |
+| --------- | ------------ |
+| 0x0800    | **ip_rcv()** |
+| 0x86DD    | ipv6_rcv()   |
+| 0x0806    | arp_rcv()    |
+| …         | many others  |
+
+---
+
+# 🟧 **What happens when an IPv4 frame arrives?**
+
+NIC driver → `netif_rx()` → kernel networking core
+
+The kernel:
+
+1. Reads the Ethernet header
+2. Extracts the EtherType = e.g. **0x0800**
+3. Searches registered protocol handlers in the `ptype_base` list
+4. Finds the one with `.type = ETH_P_IP`
+5. Calls:
+
+```
+ip_rcv(skb, dev, packet_type, orig_dev);
+```
+
+This begins the **IPv4 receive path**.
+
+---
+
+# 🟦 **What happens inside ip_rcv()?**
+
+(You’ll see this next in your reading)
+
+`ip_rcv()`:
+
+1. Validates the IPv4 header (checksum, version)
+2. Checks packet length
+3. Handles fragmentation (if any)
+4. Sends it to LOCAL delivery or FORWARDING path:
+
+* If destination IP == local machine → goes to transport layer (TCP/UDP/ICMP)
+* Otherwise → may be forwarded (router mode)
+
+---
+
+# 🟨 **Why this matters**
+
+Understanding the registration of:
+
+```c
+dev_add_pack(&ip_packet_type);
+```
+
+is crucial because **this is how Linux knows which function should process which packet**, based on protocol.
+
+---
+
+# 🟩 Summary
+
+| Layer              | Data Type          | Kernel Mechanism                   |
+| ------------------ | ------------------ | ---------------------------------- |
+| Layer 2 (Ethernet) | EtherType = 0x0800 | Registered using `dev_add_pack()`  |
+| Layer 3 (IPv4)     | IPv4 packet        | Handled by `ip_rcv()`              |
+| Layer 4 (TCP/UDP)  | Transport headers  | Dispatched after `ip_rcv_finish()` |
+
+---
+
+If you want, I can walk you through **the full IPv4 receive path** step-by-step, including:
+
+* `ip_rcv()`
+* `ip_rcv_finish()`
+* routing decision
+* passing to TCP / UDP / ICMP
+
+
+When forwarding, the kernel removes only the old L2 header, keeps and updates the L3 (IP) header, and then creates a NEW L2 header for the next hop.
+
+So your confusion comes from thinking L2/L3 headers are only “read.”
+In reality:
+
+L2 header is always stripped and rebuilt per hop.
+
+L3 header stays (with some updates like TTL, checksum).
+
+
+
+
+
+
+
+Between the ip_rcv() method and the ip_rcv_finish() method is the NF_INET_PRE_ROUTING
+netfilter hook, invoked by calling the NF_HOOK macro
+
+The netfilter subsystem
+allows you to register callbacks in five points along the journey of a packet in the network stack. These points will be
+mentioned by their names shortly. The reason for adding the netfilter hooks is to enable loading the netfilter kernel
+modules at runtime.
+
+the NF_HOOK_COND macro includes a Boolean parameter (the last
+parameter), which must be true for the hook to be executed
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
