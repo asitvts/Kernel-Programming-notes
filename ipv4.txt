@@ -323,6 +323,206 @@ parameter), which must be true for the hook to be executed
 
 
 
+if (iph->ihl < 5 || iph->version != 4)
+goto inhdr_error;
+
+if (unlikely(ip_fast_csum((u8 *)iph, iph->ihl)))
+goto inhdr_error;
+
+return NF_HOOK(NFPROTO_IPV4, NF_INET_PRE_ROUTING, skb, dev, NULL,
+ip_rcv_finish);
+
+When the registered netfilter hook method returns NF_DROP, it means that the packet should be dropped, and the
+packet traversal does not continue. When the registered netfilter hook returns NF_STOLEN, it means that the packet
+was taken over by the netfilter subsystem, and the packet traversal does not continue
+
+
+
+✅ What NF_STOLEN Really Means
+
+When your hook function returns NF_STOLEN, you are telling Netfilter:
+
+“Do NOT continue packet processing.
+I have taken responsibility for this packet.
+I will free it, modify it, retransmit it, queue it, or otherwise dispose of it myself.”
+
+Because you now own the packet, Netfilter will:
+
+NOT pass it to remaining hooks
+
+NOT reinject it
+
+NOT free it
+
+NOT forward, drop, or deliver it
+
+You must eventually decide what to do with the packet.
+
+❗ What happens if you return NF_STOLEN but do nothing?
+
+You will create a memory leak, because Netfilter will assume “the handler is managing the packet now.”
+
+This is why NF_STOLEN is used only in special situations.
+
+
+
+
+If there is no dst attached to the SKB, a lookup in the routing subsystem is performed by the
+ip_route_input_noref() method. If the lookup fails, the packet is dropped. Note that handling multicast packets is
+different than handling unicast packets
+Now a check is performed to see whether the IPv4 header includes options. Because the length of the IPv4 header
+(ihl) is measured in multiples of 4 bytes, if it is greater than 5 this means that it includes options, so the ip_rcv_options()
+method should be invoked to handle these options.
+
+
+
+The IP options field of the IPv4 header is optional and is not often used for security reasons and because of processing
+overhead. Which options might be helpful? Suppose, for example, that your packets are being dropped by a certain
+firewall. You may be able to specify a different route with the Strict or Loose Source Routing options. Or if you want to
+find out the packets’ path to some destination addresses, you can use the Record Route option.
+
+
+
+
+
+
+
+## **Two kinds of IP options**
+
+### **1. Single-byte options**
+
+These have **only the option type** byte:
+
+* **End of Option List (EOL)**
+* **No Operation (NOP)**
+
+### **2. Multibyte options**
+
+Format:
+
+```
+| Type | Length | Pointer | Option Data... |
+```
+
+* **Type** = what the option is
+* **Length** = total size of this option
+* **Pointer** = offset into the data (used by RR, Timestamp, etc.)
+* **Option Data** = e.g., timestamps, IP addresses, route entries
+
+---
+
+# ✅ **Copied Flag**
+
+Inside the option type byte:
+
+* If **copied flag = 1** → option must be copied into **all fragments**
+* If **copied flag = 0** → option only appears in **the first fragment**
+
+The kernel uses **IPOPT_COPIED(option)** to check this.
+
+In fragmentation, the kernel:
+
+* **keeps** options that must be copied
+* **replaces** non-copied options with **NOP** in other fragments
+
+---
+
+# ✅ **Option Classes**
+
+The option type byte also contains a **2-bit class field**:
+
+| Bits | Meaning               |
+| ---- | --------------------- |
+| 00   | Control (most common) |
+| 01   | Reserved1             |
+| 10   | Debug/measurement     |
+| 11   | Reserved2             |
+
+In Linux:
+
+* Only **IPOPT_TIMESTAMP** is a measurement option.
+* Most others (like RR, SSRR, LSRR) are **control** options.
+
+---
+
+# ✅ **Option Number (0–31)**
+
+This identifies the specific option type.
+Not all numbers are used; Linux implements only some of them.
+
+---
++------------------------------------------------------+
+|                    IP OPTIONS                        |
++------------------------------------------------------+
+| Option 1 | Option 2 | Option 3 | ... | Option N |
++------------------------------------------------------+
+Each option has one of these two formats:
+
+
+
+Either this 
++----------------------+
+| Option Type (1 byte) |
++----------------------+
+Used only for:
+
+0 → End of Option List (EOL)
+
+1 → No Operation (NOP)
+
+No length, no pointer, no data.
+
+
+or 
+
+
++------------------------------------------------------------------------+
+|  Option Type (8 bits)  |  Length (8 bits)  | Pointer (8 bits)         |
++------------------------------------------------------------------------+
+|                     Option Data (variable length)                      |
++------------------------------------------------------------------------+
+
+
+
+
+inside option type byte
+
+
+      +--------+----------------------------------------------+
+      |Copied (1 bit)  |   Class (2 bits)  |  Number (5 bits) |
+      +--------+----------------------------------------------+
+
+
+
+
+
+
+
+basically 
+
+                           MULTI-BYTE OPTION
+┌────────────────────────────────────────────────────────────┐
+│                        Option Type                          │
+│ 7        6 5           4 3 2 1 0                            │
+│+----------+--------------+---------------------------------+│
+│| Copied=0 | Class=00     | Number=xxxxx                    |│
+│+----------+--------------+---------------------------------+│
+└────────────────────────────────────────────────────────────┘
+┌────────────────────────┐
+│ Length (total bytes)   │  1 byte
+└────────────────────────┘
+┌────────────────────────┐
+│ Pointer / Offset       │  1 byte
+└────────────────────────┘
+┌────────────────────────────────────────────────────────────┐
+│                    Option Data (varies)                     │
+└────────────────────────────────────────────────────────────┘
+
+
+
+
+
+
 
 
 
