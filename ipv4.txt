@@ -1,0 +1,154 @@
+IPV4
+
+id: Identification of the IPv4 header. The id field is important for fragmentation: when
+fragmenting an SKB, the id value of all the fragments of that SKB should be the same.
+Reassembling fragmented packets is done according to the id of the fragments.
+
+
+frag_off: The fragment offset, a 16-bit field. The lower 13 bits are the offset of the fragment.
+In the first fragment, the offset is 0. The offset is measured in units of 8 bytes. The higher 3 bits
+are the flags:
+•001 is MF (More Fragments). It is set for all fragments, except the last one.
+•010 is DF (Don’t Fragment).
+•100 is CE (Congestion).
+See the IP_MF, IP_DF, and IP_CE flags declaration in include/net/ip.h.
+
+ttl: Time To Live: this is a hop counter. Each forwarding node decreases the ttl by 1. When
+it reaches 0, the packet is discarded, and a time exceeded ICMPv4 message is sent back; this
+avoids packets from being forwarded endlessly, for this reason or another.
+
+
+The **Type of Service (ToS)** field in the IPv4 header specifies **how the packet should be handled** by routers—its priority, delay requirements, throughput needs, reliability, etc.
+
+Originally, ToS was an 8-bit field, but it has evolved over time.
+Let’s go through both the **old interpretation** and the **modern one (DSCP/ECN)**.
+
+---
+
+# ✅ **Original IPv4 Type of Service (RFC 791)**
+
+This is the classical structure:
+
+```
+  0   1   2   3   4   5   6   7
++---+---+---+---+---+---+---+---+
+|   PRECEDENCE   |D|T|R|0|0|0|
++---+---+---+---+---+---+---+---+
+```
+
+### 1) **3-bit Precedence**
+
+Indicates priority of the datagram.
+
+| Value | Meaning              |
+| ----- | -------------------- |
+| 000   | Routine              |
+| 001   | Priority             |
+| 010   | Immediate            |
+| 011   | Flash                |
+| 100   | Flash Override       |
+| 101   | CRITIC/ECP           |
+| 110   | Internetwork Control |
+| 111   | Network Control      |
+
+Higher value = higher priority.
+
+---
+
+### 2) **D, T, R flags (1 bit each)**
+
+| Bit | Meaning     | What it asks routers to do |
+| --- | ----------- | -------------------------- |
+| D   | Delay       | Prefer low delay           |
+| T   | Throughput  | Prefer high throughput     |
+| R   | Reliability | Prefer high reliability    |
+
+Only one of these was supposed to be set at once.
+
+---
+
+### 3) Last 3 bits: Always zero (unused)
+
+---
+
+# ❌ This original ToS is **obsolete**
+
+Routers do NOT use these bits anymore.
+Instead, they use the **DSCP/ECN** interpretation defined in RFC 2474 and RFC 3168.
+
+---
+
+# 🟩 Modern meaning of the Type of Service byte
+
+The 8-bit ToS field was **redefined**:
+
+```
++-----------------------+------------+
+|        DSCP (6 bits)  |  ECN (2 bits) |
++-----------------------+------------+
+```
+
+---
+
+# ✅ **1. DSCP (Differentiated Services Code Point) – 6 bits**
+
+Used for **QoS (Quality of Service)** classification.
+Routers use DSCP to decide queueing, scheduling, and priority.
+
+Example DSCP values:
+
+| DSCP (bits) | Name                      | Purpose                    |
+| ----------- | ------------------------- | -------------------------- |
+| 000000      | BE (Best Effort)          | Normal traffic             |
+| 101110      | EF (Expedited Forwarding) | Low loss, low delay (VoIP) |
+| 001010      | AF11                      | Assured Forwarding         |
+| 010010      | AF21                      | Assured Forwarding         |
+| 011010      | AF31                      | Assured Forwarding         |
+
+---
+
+# ✅ **2. ECN (Explicit Congestion Notification) – 2 bits**
+
+Used for **active congestion control** without dropping packets.
+
+| ECN bits | Meaning                |
+| -------- | ---------------------- |
+| 00       | Not ECN-capable        |
+| 01       | ECN-capable transport  |
+| 10       | ECN-capable transport  |
+| 11       | Congestion encountered |
+
+TCP uses this to reduce data rate before queues overflow.
+
+---
+
+# 🟦 So what is “Type of Service” today?
+
+Even though the IPv4 header still labels this byte as **Type of Service**, its meaning is:
+
+> **Upper 6 bits = DSCP (QoS class)**
+> **Lower 2 bits = ECN (congestion signaling)**
+
+The old ToS meaning (precedence, delay, throughput, reliability) is no longer used.
+
+---
+
+# ✔ Final Summary
+
+### **Original (obsolete) ToS field:**
+
+* **3 bits**: Precedence
+* **1 bit**: Minimize delay
+* **1 bit**: Maximize throughput
+* **1 bit**: Maximize reliability
+* **3 bits**: unused
+
+### **Modern ToS field:**
+
+* **6 bits**: DSCP (QoS classification)
+* **2 bits**: ECN (congestion notification)
+
+---
+
+If you want, I can draw a clear ASCII diagram showing the old vs new layouts inside the IPv4 header.
+

@@ -99,9 +99,9 @@ Sure! Let’s break down **how tcpdump works** in detail, step by step, in a way
 
 ---
 
-# **7. Example flow for loopback ping**
+# 7. Example flow for loopback ping**
 
-1. `ping 127.0.0.1`
+1. ping 127.0.0.1
 2. Kernel creates `sk_buff` with ICMP echo request.
 3. `sk_buff` goes through IP → ICMP → loopback interface.
 4. PF_PACKET socket (tcpdump) **receives a copy** of the `sk_buff`.

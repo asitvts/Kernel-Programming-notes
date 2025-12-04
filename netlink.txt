@@ -1,0 +1,657 @@
+Netlink sockets can be created in the kernel or in userspace; kernel netlink sockets are created by the
+netlink_kernel_create() method; and userspace netlink sockets are created by the socket() system call. Creating
+a netlink socket from userspace or from the kernel creates a netlink_sock object.
+
+
+sockaddr_nl Structure
+
+To talk to the kernel, you need an address. In netlink, that’s:
+
+struct sockaddr_nl {
+    sa_family_t nl_family;   // Always AF_NETLINK
+    unsigned short nl_pad;   // Padding
+    pid_t nl_pid;            // Process ID (0 for kernel)
+    __u32 nl_groups;         // Multicast groups mask
+};
+
+
+nl_family → Should always be AF_NETLINK.
+
+nl_pid → Identifies the sender. If 0, it refers to the kernel. Normally, userspace sets its PID.
+
+nl_groups → Lets you subscribe to kernel multicast notifications.
+
+You fill this structure, then bind it to the socket.
+
+
+
+
+
+
+
+
+### **1. Two major userspace packages for networking**
+
+Linux has **two main toolsets** for controlling networking and devices:
+
+#### **A. net-tools**
+
+* **Older package**.
+* Based on **IOCTL system calls** (not netlink sockets).
+* Commands include:
+
+  * `ifconfig` → shows/configures network interfaces
+  * `arp` → manages ARP cache
+  * `route` → manages routing tables
+  * `netstat` → shows network connections and statistics
+  * `hostname` → sets or shows hostname
+  * `rarp` → reverse ARP operations
+* **Limitation:** Doesn’t support some advanced features like complex traffic control or bridges.
+
+#### **B. iproute2**
+
+* **Modern replacement** for net-tools.
+* Mostly uses **netlink sockets** to communicate with the kernel.
+* Commands include:
+
+  * `ip` → manage interfaces, routes, IP addresses
+  * `tc` → traffic control (queues, shaping)
+  * `ss` → socket statistics
+  * `lnstat` → detailed Linux network stats
+  * `bridge` → bridge addresses/devices management
+* **Exception:** Some commands like `ip tuntap` still use **IOCTLs** because the TUN/TAP driver defines IOCTL handlers but doesn’t use netlink.
+
+---
+
+### **2. Why netlink matters for iproute2**
+
+* Most iproute2 commands **send requests to the kernel via netlink sockets**, and the kernel sends replies back.
+* This is more **modern, flexible, and extensible** than IOCTLs.
+* Netlink allows **structured messages**, making it easier to support new networking features without changing the userspace tool.
+
+---
+
+### **3. Kernel netlink sockets**
+
+* The **kernel implements netlink sockets** as the communication engine.
+* Userspace programs (like iproute2) send **netlink messages** to request changes or query information.
+* Kernel responds with **netlink messages**, giving back data or status.
+* Understanding kernel netlink sockets is crucial for:
+
+  * Writing new networking tools
+  * Extending iproute2 functionalities
+  * Understanding how Linux manages interfaces, routing, and traffic control.
+
+---
+
+### **4. Summary in simple language**
+
+* **net-tools:** old, uses IOCTL, basic networking commands.
+* **iproute2:** new, mostly uses **netlink sockets**, supports advanced features.
+* **Netlink sockets:** the “engine” that allows **userspace ↔ kernel communication** for networking in Linux.
+
+
+
+
+
+
+
+Great question—this paragraph is describing **how the Linux kernel itself creates and manages Netlink sockets internally**, specifically for routing (rtnetlink). Let’s unpack it step-by-step in a clean and intuitive way.
+
+I’ll explain in **two layers**:
+
+1. **Simple meaning (high-level)**
+2. **Technical meaning (what each line of code is doing)**
+
+---
+
+## ✅ 1. Simple Meaning (High-Level)
+
+* The **Linux kernel** creates **multiple netlink sockets inside the kernel**.
+* Each **kernel netlink socket handles a specific category of messages**.
+* Example:
+
+  * `NETLINK_ROUTE` → routing tables, interfaces, IP addresses, etc.
+* The special routing netlink socket is created inside:
+
+  ```
+  rtnetlink_net_init()
+  ```
+* This socket is:
+
+  * **Per network namespace**
+  * **Stored inside `struct net`**
+* That means:
+
+  > Every network namespace gets its **own private rtnetlink socket**.
+
+---
+
+## ✅ 2. What This Function Is Actually Doing
+
+Here is the key code again:
+
+```c
+static int __net_init rtnetlink_net_init(struct net *net)
+{
+    struct netlink_kernel_cfg cfg = {		// this struct tells kernel how the netlink sock should behave
+        .groups    = RTNLGRP_MAX,			// sets the maximum mutlicast groups
+        .input     = rtnetlink_rcv,			// function that kernel uses to get data from userspace
+        .cb_mutex  = &rtnl_mutex,
+        .flags     = NL_CFG_F_NONROOT_RECV,
+    };
+
+    sk = netlink_kernel_create(net, NETLINK_ROUTE, &cfg);		// actual kernel socket creation
+}
+```
+
+Let’s decode each part.
+
+---
+
+## ✅ 3. `rtnetlink_net_init(struct net *net)`
+
+### 🔹 Meaning:
+
+* This function runs when:
+
+  * A **new network namespace is created**
+  * Or the default namespace is initialized
+* `struct net *net` = **one network namespace object**
+
+So this function initializes **rtnetlink inside ONE namespace**.
+
+---
+
+## ✅ 4. `struct netlink_kernel_cfg cfg`
+
+This structure tells the kernel **how this netlink socket should behave**.
+
+### 🔹 `.groups = RTNLGRP_MAX`
+
+* This sets the **maximum multicast groups**.
+* Used for broadcasting events like:
+
+  * Interface UP/DOWN
+  * Route added/deleted
+  * IP address change
+
+---
+
+### 🔹 `.input = rtnetlink_rcv`
+
+* This is the **receive handler callback**.
+* Whenever a userspace program (like `ip route`) sends a netlink message:
+  👉 The kernel calls:
+
+```
+rtnetlink_rcv()
+```
+
+This function **parses and processes routing messages**.
+
+---
+
+### 🔹 `.cb_mutex = &rtnl_mutex`
+
+* This is a **lock** to protect routing operations.
+* Prevents:
+
+  * Two routing updates from colliding
+  * Race conditions
+
+---
+
+### 🔹 `.flags = NL_CFG_F_NONROOT_RECV`
+
+* This allows **non-root users** to receive **some multicast messages**.
+* Example: Interface state notifications.
+
+---
+
+## ✅ 5. `netlink_kernel_create(net, NETLINK_ROUTE, &cfg);`
+
+This is the **actual kernel socket creation call**.
+
+### 🔹 What this does:
+
+| Parameter       | Meaning                                            |
+| --------------- | -------------------------------------------------- |
+| `net`           | Which **network namespace** this socket belongs to |
+| `NETLINK_ROUTE` | Which **netlink protocol family**                  |
+| `&cfg`          | How the socket should behave                       |
+
+✅ Result:
+The kernel now has a fully functional **rtnetlink kernel socket**.
+
+---
+
+## ✅ 6. Where is This Socket Stored?
+
+The paragraph says:
+
+> The network namespace object (`struct net`) contains a member named `rtnl`.
+
+That means:
+
+```c
+struct net {
+    ...
+    struct sock *rtnl;
+    ...
+}
+```
+
+After creating the socket, the kernel does:
+
+```c
+net->rtnl = sk;
+```
+
+So now:
+
+> Every network namespace directly owns its own routing netlink socket.
+
+---
+
+## ✅ 7. Why This Design Is Powerful
+
+Because of this:
+
+✅ Each **container / namespace** can have:
+
+* Its **own routes**
+* Its **own interfaces**
+* Its **own netlink communication**
+
+✅ Userspace tools like:
+
+* `ip route`
+* `ip link`
+* `bridge`
+
+Automatically talk to the **correct namespace’s rtnetlink socket**.
+
+---
+
+## ✅ 8. Final One-Line Summary (Easy Language)
+
+> The kernel creates a separate **rtnetlink socket for each network namespace**, using `netlink_kernel_create()`, and stores that socket inside that namespace’s `struct net`.
+
+
+
+so to get the netlink_socket do
+
+
+current->nsproxy->net_ns->rtnl
+
+or simply:
+
+net->rtnl
+
+
+
+
+
+
+
+
+
+
+
+
+The input member is for a callback; when the input member in netlink_kernel_cfg is NULL, the kernel socket
+won’t be able to receive data from userspace (sending data from the kernel to userspace is possible, though).
+
+
+
+For uevent kernel events, you need only to send data from the kernel to userspace; so, in lib/kobject_uevent.c,
+you have an example of a netlink socket where the input callback is undefined
+
+
+Netlink Type	Used For
+NETLINK_ROUTE	Routes, IP, Interfaces
+NETLINK_NETFILTER	Firewall, NAT, Conntrack
+NETLINK_GENERIC	WiFi, thermal, many subsystems
+NETLINK_USERSOCK	Userspace ↔ Userspace
+NETLINK_KOBJECT_UEVENT	Device hotplug events
+NETLINK_SOCK_DIAG	Socket stats
+NETLINK_XFRM	IPsec
+NETLINK_AUDIT	Security audit
+NETLINK_CRYPTO	Cryptography
+
+
+
+
+
+
+
+
+
+
+## ✅ 1. What is `rtnl_register()` doing? (Big Picture)
+
+Inside the Linux kernel, **every RTNL (Routing Netlink) message type must have a handler registered**.
+
+That registration is done with:
+
+```c
+rtnl_register(protocol, msgtype, doit, dumpit, calcit);
+```
+
+This tells the kernel:
+
+> “When a netlink message of THIS type arrives, call THIS function.”
+
+---
+
+## ✅ 2. Meaning of Each Parameter (Very Important)
+
+### ✅ (1) `protocol` → Protocol Family
+
+Example:
+
+```c
+PF_UNSPEC
+PF_INET
+PF_INET6
+```
+
+This tells **which network protocol this handler applies to**.
+
+| Value       | Meaning      |
+| ----------- | ------------ |
+| `PF_UNSPEC` | Any protocol |
+| `PF_INET`   | IPv4         |
+| `PF_INET6`  | IPv6         |
+
+So if you don’t care about protocol → use `PF_UNSPEC`.
+
+---
+
+### ✅ (2) `msgtype` → Netlink Message Type
+
+Examples:
+
+```c
+RTM_NEWLINK
+RTM_DELLINK
+RTM_NEWADDR
+RTM_NEWNEIGH
+```
+
+These define **WHAT operation the message represents**:
+
+| Message        | Meaning               |
+| -------------- | --------------------- |
+| `RTM_NEWLINK`  | New network interface |
+| `RTM_DELLINK`  | Delete interface      |
+| `RTM_NEWROUTE` | Add route             |
+| `RTM_NEWNEIGH` | New ARP/NDP entry     |
+
+✅ These are **RTNL-specific message types** defined in:
+
+```
+include/uapi/linux/rtnetlink.h
+```
+
+---
+
+### ✅ (3) `doit` → Action Handler (MODIFY)
+
+Used for:
+
+* Add
+* Delete
+* Modify
+
+Example:
+
+```c
+rtnl_newlink()
+```
+
+So when userspace sends:
+
+```bash
+ip link add ...
+```
+
+The kernel eventually executes:
+
+```c
+rtnl_newlink()
+```
+
+---
+
+### ✅ (4) `dumpit` → Dump Handler (READ)
+
+Used for:
+
+* Listing
+* Dumping tables
+
+Example:
+
+```c
+ip link show
+ip route show
+```
+
+These go through the **dumpit** callback.
+
+---
+
+### ✅ (5) `calcit` → Buffer Size Calculator
+
+Used for:
+
+* Estimating message size
+* Rarely needed
+* Usually set to `NULL`
+
+---
+
+## ✅ 3. Where Are These Callbacks Stored?
+
+The kernel maintains this **two-level dispatch table**:
+
+```text
+rtnl_msg_handlers[PROTOCOL][MSGTYPE]
+```
+
+Each entry contains:
+
+```c
+struct rtnl_link {
+    rtnl_doit_func doit;
+    rtnl_dumpit_func dumpit;
+    rtnl_calcit_func calcit;
+};
+```
+
+So when you call:
+
+```c
+rtnl_register(PF_UNSPEC, RTM_NEWLINK, rtnl_newlink, NULL, NULL);
+```
+
+You are doing:
+
+```text
+rtnl_msg_handlers[PF_UNSPEC][RTM_NEWLINK].doit = rtnl_newlink;
+```
+
+✅ This is how the kernel knows **which function to run for each RTNL request**.
+
+---
+
+## ✅ 4. How an RTNL Message Is SENT from the Kernel
+
+Now the **sending flow**, using this example:
+
+```c
+dev_open()
+ → rtmsg_ifinfo(RTM_NEWLINK, dev, IFF_UP | IFF_RUNNING);
+```
+
+This happens when a network interface is brought UP.
+
+Let’s follow the exact stages.
+
+---
+
+### ✅ Step 1: `rtmsg_ifinfo()`
+
+This function prepares a **routing netlink notification** for userspace.
+
+---
+
+### ✅ Step 2: `nlmsg_new()`
+
+```c
+nlmsg_new()
+```
+
+This:
+
+* Allocates a new **`sk_buff`**
+* With the exact required size for the netlink message
+
+✅ This buffer will carry the RTNL message to userspace.
+
+---
+
+### ✅ Step 3: Create Two Objects inside the Buffer
+
+Inside the `sk_buff`, the kernel places:
+
+1️⃣ **Netlink message header**
+
+```c
+struct nlmsghdr
+```
+
+2️⃣ **Interface info payload**
+
+```c
+struct ifinfomsg
+```
+
+Layout in memory:
+
+```
+| nlmsghdr | ifinfomsg | attributes |
+```
+
+These are filled using:
+
+```c
+rtnl_fill_ifinfo()
+```
+
+---
+
+### ✅ Step 4: `rtnl_notify()`
+
+This function:
+
+* Sends the prepared RTNL packet
+* To all subscribed userspace listeners
+
+---
+
+### ✅ Step 5: `nlmsg_notify()` (Final Transmission)
+
+This is the **generic netlink send engine** in:
+
+```
+net/netlink/af_netlink.c
+```
+
+This is where the packet finally:
+
+* Enters the Netlink socket
+* Gets delivered to:
+
+  * `ip monitor`
+  * `udev`
+  * Network managers
+  * Any listening userspace process
+
+---
+
+## ✅ 5. Complete End-to-End Flow (One Shot View)
+
+```text
+dev_open()
+   ↓
+rtmsg_ifinfo()
+   ↓
+nlmsg_new()           → allocates skb
+   ↓
+rtnl_fill_ifinfo()   → fills nlmsghdr + ifinfomsg
+   ↓
+rtnl_notify()
+   ↓
+nlmsg_notify()       → sends to userspace via RTNL socket
+```
+
+---
+
+## ✅ 6. Why This Design Is Brilliant
+
+* ✅ Clean separation of:
+
+  * Message types
+  * Protocol families
+  * Action handlers
+* ✅ New networking features can be added just by:
+
+  * Defining new RTM_* message
+  * Registering a new callback
+* ✅ Userspace never changes:
+
+  * It only sends netlink messages
+
+---
+
+## ✅ Final One-Line Summary (Perfect for Interviews)
+
+> `rtnl_register()` installs handler callbacks for specific RTNL message types into the kernel’s routing netlink dispatch table, and RTNL messages are sent to userspace by building a netlink packet using `nlmsg_new()`, filling it with `rtnl_fill_ifinfo()`, and delivering it via `nlmsg_notify()`.
+
+
+
+
+Every netlink packet starts with a netlink message header, which is represented by struct nlmsghdr. The length
+of nlmsghdr is 16 bytes. It contains five fields:
+
+•nlmsg_len is the length of the message including the header.
+
+•nlmsg_type is the message type; there are four basic netlink message header types:
+	•NLMSG_NOOP: No operation, message must be discarded.
+	•NLMSG_ERROR: Error occurred.
+	•NLMSG_DONE: A multipart message is terminated.
+	•NLMSG_OVERRUN: Overrun notification: error, data was lost.
+	
+• nlmsg_flags field
+
+•nlmsg_seq is the sequence number (for message sequences). Unlike some Layer 4 transport
+protocols, there is no strict enforcement of the sequence number.
+
+•nlmsg_pid is the sending port id. When a message is sent from the kernel, the nlmsg_pid is 0.
+When a message is sent from userspace, the nlmsg_pid can be set to be the process id of that
+userspace application which sent the message.
+
+
+
+
+
+
+
+
+
+
+
+

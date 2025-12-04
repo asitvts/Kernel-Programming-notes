@@ -1,0 +1,780 @@
+The kernel does not handle any layer above L4; those layers (the session, presentation, and application layers) are
+handled solely by userspace applications. The physical layer (L1) is also not handled by the Linux kernel.
+
+
+net_device structure, which represents a network device
+
+
+The net_device is a very large structure, consisting of device parameters like these:
+
+
+•The IRQ number of the device.
+•The MTU of the device.
+•The MAC address of the device.
+•The name of the device (like eth0 or eth1).
+•The flags of the device (for example, whether it is up or down).
+•A list of multicast addresses associated with the device.
+•The promiscuity counter (discussed later in this section).
+•The features that the device supports (like GSO or GRO offloading).
+•An object of network device callbacks (net_device_ops object), which consists of function
+pointers, such as for opening and stopping a device, starting to transmit, changing the MTU of
+the network device, and more.
+
+•An object of ethtool callbacks, which supports getting information about the device by
+running the command-line ethtool utility.
+
+•The number of Tx and Rx queues, when the device supports multiqueues.
+•The timestamp of the last transmit of a packet on this device.
+•The timestamp of the last reception of a packet on this device.
+
+When the promiscuity counter is larger than 0, the network stack does not discard packets that are not destined
+to the local host. This is used, for example, by packet analyzers (“sniffers”) like tcpdump and wireshark, which open
+raw sockets in userspace and want to receive also this type of traffic. It is a counter and not a Boolean in order to
+enable opening several sniffers concurrently: opening each such sniffer increments the counter by 1. When a sniffer is
+closed, the promiscuity counter is decremented by 1; and if it reaches 0, there are no more sniffers running, and the
+device exits the promiscuous mode.
+
+
+
+The old network device drivers worked in interrupt-driven mode, which means that for every received packet, there was
+an interrupt. This proved to be inefficient in terms of performance under high load traffic. A new software technique
+was developed, called New API (NAPI), which is now supported on almost all Linux network device drivers. NAPI was
+first introduced in the 2.5/2.6 kernel and was backported to the 2.4.20 kernel. With NAPI, under high load, the network
+device driver works in polling mode and not in interrupt-driven mode. This means that each received packet does not
+trigger an interrupt. Instead the packets are buffered in the driver, and the kernel polls the driver from time to time to
+fetch the packets. Using NAPI improves performance under high load. For sockets applications that need the lowest
+possible latency and are willing to pay a cost of higher CPU utilization, Linux has added a capability for Busy Polling on
+Sockets from kernel 3.11 and later.
+
+
+
+✅ Driver touches Layer 1
+✅ Driver implements Layer 2
+❌ Driver does NOT implement Layer 3+
+
+🔧 What Exactly Does a Network Driver Do? (Technically)
+
+A Linux network driver works with:
+
+MAC address handling ✅ (Layer 2)
+
+Ethernet frame TX/RX ✅
+
+DMA buffers ✅
+
+Interrupts / NAPI ✅
+
+PHY configuration ✅ (Layer 1)
+
+But NOT:
+
+IP routing ❌
+
+TCP congestion control ❌
+
+DNS ❌
+
+All that is done by the Linux Network Stack, not the driver.
+
+🧠 Correct Statement You Can Use in Exams / Interviews
+
+✅ Best Correct Line:
+
+Network device drivers are kernel-level programs that interact with network hardware and primarily operate at OSI Layer 2 (Data Link Layer), while supporting Layer 1 operations.
+
+
+
+For every incoming and outgoing packet, the Linux routing subsystem performs a route lookup to decide:
+
+✅ Should this packet be forwarded or delivered locally?
+
+✅ Through which network interface should it be sent?
+
+However, routing alone does NOT fully decide packet traversal.
+Before and after routing decisions, the packet passes through five Netfilter hook points, where firewall rules and filters (iptables) can:
+
+Accept the packet
+
+Drop the packet
+
+Modify the packet
+
+Redirect the packet
+
+These hooks are invoked using the macro NF_HOOK(), and the final decision is called a verdict (e.g., NF_ACCEPT, NF_DROP).
+
+Netfilter hooks are registered using:
+
+nf_register_hook()
+
+nf_register_hooks()
+
+And the userspace tool that controls all this is iptables.
+
+
+
+5 Netfilter Hook Points (Very Important for Interviews)
+Hook Name	Packet Kab Aata Hai
+NF_INET_PRE_ROUTING	Packet aate hi, before routing
+NF_INET_LOCAL_IN	Packet local machine ke liye
+NF_INET_FORWARD	Packet forward ho raha hai
+NF_INET_LOCAL_OUT	Packet local machine se nikla
+NF_INET_POST_ROUTING	Packet bahar jaane se just pehle
+
+✅ These are the exact points where iptables rules apply
+
+
+
+What is NF_HOOK()?
+
+This is a kernel macro that:
+
+Calls all registered firewall functions
+
+Collects their verdict
+
+Decides:
+
+Continue
+
+Drop
+
+Modify
+
+Queue to userspace
+
+
+
+
+What is a Verdict?
+
+When a Netfilter callback runs, it returns a verdict:
+
+Verdict	Meaning
+NF_ACCEPT	Packet allowed ✅
+NF_DROP	Packet destroyed ❌
+NF_STOLEN	Packet taken over
+NF_QUEUE	Sent to userspace
+NF_REPEAT	Run hook again
+
+
+
+Jab kernel likhta hai:
+
+NF_HOOK(..., NF_INET_PRE_ROUTING, ...)
+
+
+Toh iska matlab hota hai:
+
+👉 “Sirf PRE_ROUTING wale firewall rules chalao”
+
+Aur jab likhta hai:
+
+NF_HOOK(..., NF_INET_POST_ROUTING, ...)
+
+
+Toh matlab:
+
+👉 “Ab sirf POST_ROUTING wale rules chalao”
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# ✅ 1. Netfilter Is Not the Only “King” of Packet Traversal
+
+### 🔹 Technical Meaning
+
+Even though **Netfilter hooks** (firewall, NAT, filtering) control a major part of packet traversal, they are **not the only system** that can:
+
+* Drop a packet
+* Modify a packet
+* Redirect a packet
+
+Other subsystems—especially **IPsec, TTL/Hop Limit, fragmentation, multicast, etc.**—also affect whether a packet survives or not.
+
+---
+
+### 🔹 Easy Hinglish
+
+Sochne wali baat ye hai:
+
+👉 **Firewall (Netfilter) powerful hai, lekin akela raja nahi hai**
+Packet ka fate ye cheezein bhi decide karti hain:
+
+* IPsec security
+* TTL / Hop Limit
+* Fragmentation
+* Multicast rules
+* Checksum errors
+
+---
+
+# ✅ 2. Role of IPsec in Packet Traversal
+
+This part talks about: **IPsec**
+
+---
+
+## ✅ 2.1 What IPsec Is (Definition)
+
+> **IPsec is a network-layer security framework that provides encryption, authentication, and integrity for IP packets.**
+
+It works at **Layer 3 (Network Layer)**.
+
+It uses two protocols:
+
+| Protocol | Full Form                      | Purpose                    |
+| -------- | ------------------------------ | -------------------------- |
+| **ESP**  | Encapsulating Security Payload | Encryption + Integrity     |
+| **AH**   | Authentication Header          | Integrity + Authentication |
+
+---
+
+## ✅ 2.2 IPv4 vs IPv6 Rule
+
+* ✅ IPsec is **mandatory in IPv6**
+* ⚠️ IPsec is **optional in IPv4**
+* ✅ But **Linux supports IPsec in both IPv4 and IPv6**
+
+Protocols involved:
+
+* IPv4
+* IPv6
+
+---
+
+## ✅ 2.3 IPsec Modes
+
+| Mode               | Meaning                       |
+| ------------------ | ----------------------------- |
+| **Transport Mode** | Only payload is encrypted     |
+| **Tunnel Mode**    | Entire IP packet is encrypted |
+
+---
+
+## ✅ 2.4 IPsec and VPN
+
+Most **VPNs are built on IPsec**, but:
+
+* ✅ Every VPN is NOT IPsec-based
+* ✅ Every IPsec tunnel is basically a **VPN**
+
+---
+
+### 🔹 Hinglish Summary for IPsec
+
+👉 IPsec **packet ko secure banata hai**
+👉 Encrypt karta hai
+👉 Authenticate karta hai
+👉 Mostly **VPN ke peeche IPsec hota hai**
+👉 IPv6 me IPsec compulsory hai
+
+---
+
+# ✅ 3. TTL in IPv4 and Hop Limit in IPv6
+
+This part explains **why packets don’t keep roaming forever**.
+
+---
+
+## ✅ 3.1 TTL in IPv4
+
+In IPv4:
+
+* Packet has a field called **TTL (Time To Live)**
+* Each router:
+
+  * ✅ Reduces TTL by **1**
+* When TTL reaches **0**:
+
+  * ❌ Packet is dropped
+  * ✅ ICMP error is sent back
+
+That ICMP message is:
+
+> **Time Exceeded – TTL Count Exceeded**
+
+Generated using: ICMP
+
+---
+
+## ✅ 3.2 IPv6 Equivalent: Hop Limit
+
+In IPv6:
+
+* TTL does not exist
+* Instead it uses:
+
+  > ✅ **Hop Limit**
+* Same rule:
+
+  * Decrement by 1
+  * If 0 → Drop packet + send ICMPv6 error
+
+
+---
+
+# ✅ 4. IPv4 Header Checksum Recalculation
+
+Every time TTL changes:
+
+* ✅ IPv4 header changes
+* ✅ Hence **IPv4 header checksum must be recalculated**
+
+⚠️ This happens **at every forwarding hop**
+
+---
+
+### 🔹 Hinglish
+
+TTL badla → header badla → checksum dobara banana padega ✅
+
+---
+
+# ✅ 5. Receive Path (Rx) and Transmit Path (Tx)
+
+The book then says:
+
+Packets travel in two directions:
+
+| Path        | Meaning                   |
+| ----------- | ------------------------- |
+| **Rx Path** | Incoming packet (Ingress) |
+| **Tx Path** | Outgoing packet (Egress)  |
+
+And traversal is **complex** because:
+
+* Fragmentation may happen
+* Reassembly may happen
+* Multicast packets behave differently
+* Forwarded packets behave differently from local packets
+
+---
+
+# ✅ 6. Fragmentation and Reassembly
+
+* ✅ Big packet → **Fragmentation before sending**
+* ✅ Small fragments → **Reassembled at receiver**
+
+This is mainly handled inside the IPv4 subsystem.
+
+---
+
+# ✅ 7. Multicast vs Unicast
+
+| Type          | Meaning                         |
+| ------------- | ------------------------------- |
+| **Unicast**   | One sender → one receiver       |
+| **Multicast** | One sender → multiple receivers |
+
+---
+
+## ✅ 7.1 Multicast Use Case
+
+Used in:
+
+* ✅ Streaming media
+* ✅ Live video
+* ✅ IPTV
+
+So that **network bandwidth is saved**.
+
+---
+
+## ✅ 7.2 Multicast Membership (IPv4)
+
+In IPv4, multicast group join/leave is handled by:
+
+> ✅ **IGMP**
+
+---
+
+## ✅ 7.3 Multicast Routing (Advanced Case)
+
+If a host is acting as a **multicast router**, then:
+
+* It must **forward multicast packets**
+* It needs a **userspace routing daemon**, like:
+
+  * **pimd**
+  * **mrouted**
+
+This is called:
+
+> ✅ **Multicast Routing**
+
+---
+
+# ✅ 8. How Packets Are Represented Inside the Linux Kernel
+
+This is a **VERY IMPORTANT LINE** for driver & kernel networking:
+
+> The packet is represented inside the kernel using the `sk_buff` structure.
+
+That structure is:
+
+> ✅ **sk_buff**
+
+* Found in: `include/linux/skbuff.h`
+* Common name: **SKB**
+* Represents:
+
+  * Packet data
+  * Ethernet header
+  * IP header
+  * TCP/UDP header
+  * Routing info
+  * Device info
+  * Netfilter state
+
+---
+
+# ✅ 9. Final Big Picture Summary (Interview-Ready)
+
+> Packet traversal in Linux is influenced not only by the Netfilter firewall hooks but also by the IPsec security subsystem, the IPv4 TTL and IPv6 Hop Limit mechanisms, fragmentation and reassembly logic, multicast handling via IGMP and routing daemons, and checksum recalculations. Inside the Linux kernel, every packet is represented by the `sk_buff` structure, which carries all packet-related metadata across the Rx and Tx paths.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+if you want to fetch the L4 header (transport header) from an SKB, you do it by calling the
+skb_transport_header() method. Likewise if you want to fetch the L3 header (network header), you do it by calling
+the skb_network_header() method, and if you want to fetch the L2 header (MAC header), you do it by calling the
+skb_mac_header() method.
+
+
+
+
+
+When a packet is received on the wire, an SKB is allocated by the network device driver, typically by
+calling the netdev_alloc_skb() method
+
+
+There are cases along the packet traversal where a packet can be discarded, and this is done 
+by calling kfree_skb() or dev_kfree_skb(), both of which get as a single
+parameter a pointer to an SKB.
+
+pkt_type is determined by the eth_type_trans() method, according to the destination Ethernet address. If this
+address is a multicast address, the pkt_type will be set to PACKET_MULTICAST; if this address is a broadcast address,
+the pkt_type will be set to PACKET_BROADCAST; and if this address is the address of the local host, the pkt_type
+will be set to PACKET_HOST.
+
+
+netdev_alloc_skb()
+dev_kfree_skb()
+pkt_type by eth_type_trans(), either PACKET_MULTICAST or PACKET_BROADCAST or PACKET_HOST
+
+
+
+
+
+
+### 1. **SKB (Socket Buffer)**
+
+* **Definition:** In Linux networking, the **SKB (struct sk_buff)** is the kernel’s internal representation of a network packet.
+* It contains:
+
+  * **Packet headers:** L2 (Ethernet), L3 (IP), L4 (TCP/UDP)
+  * **Payload/data**: The actual content being transmitted
+* **Key point:** The SKB is passed around in the kernel as a packet moves through the network stack.
+
+---
+
+### 2. **Adding headers**
+
+* When a **packet is generated locally** (e.g., by a socket), it starts as just the payload.
+* The **network layer adds headers**:
+
+  * **IPv4 header** (L3) is added.
+
+    * Minimum size: 20 bytes
+    * Maximum size: 60 bytes (if IP options are included)
+  * **UDP header** (L4) is 8 bytes
+  * **Ethernet header** (L2) is 14 bytes
+* Example for a UDP over IPv4 packet:
+  `[Ethernet header | IPv4 header | UDP header | Payload]`
+
+---
+
+### 3. **dev member in SKB**
+
+* **Definition:** `skb->dev` points to the **network device** associated with the packet.
+
+  * **Incoming packet:** The device where the packet arrived
+  * **Outgoing packet:** The device that will transmit the packet
+* **Importance:** The device info is needed for things like:
+
+  * **MTU check** (to decide if fragmentation is needed)
+  * Influence traversal through the networking stack
+
+---
+
+### 4. **sk member in SKB**
+
+* **Definition:** `skb->sk` points to the **socket** associated with this packet.
+* **Key points:**
+
+  * If the packet was generated locally, `skb->sk` points to the originating socket.
+  * If the packet is **forwarded** (i.e., routed through this machine), `skb->sk` is `NULL` because it wasn’t generated locally.
+
+---
+
+### 5. **Protocol handler**
+
+* Each packet type is handled by a **network layer protocol handler**:
+
+  * IPv4 → `ip_rcv()`
+  * IPv6 → `ipv6_rcv()`
+* These handlers are **registered** via `dev_add_pack()` so the kernel knows which handler to call for which type of packet.
+
+---
+
+### 6. **Packet traversal**
+
+* When a packet arrives:
+
+  1. **Sanity checks** in `ip_rcv()`
+  2. Passes to **NF_INET_PRE_ROUTING** hook (if registered)
+  3. If not dropped by the hook, it goes to `ip_rcv_finish()`
+
+     * Routing lookup happens here
+     * Builds a **destination cache entry (`dst_entry`)**
+     * This is used to know where the packet should go next
+
+* This traversal ensures the packet is **checked, optionally filtered, and routed correctly**.
+
+---
+
+✅ **Summary:**
+
+* **SKB** = kernel’s representation of the packet with headers + payload
+* **Headers are added** at the appropriate layer (L2, L3, L4)
+* **`dev` and `sk` members** provide info about the network device and originating socket
+* **Protocol handlers** process packets depending on type (IPv4, IPv6)
+* **Packet traversal** goes through hooks, routing, and optional filtering
+
+
+
+Routing Lookup (Definition)
+
+A routing lookup is the process by which the kernel decides where to send a packet next.
+
+When an IP packet arrives (incoming) or is about to be sent (outgoing), the kernel needs to know the next hop or the interface to use. That’s what routing lookup does.
+
+
+
+
+
+### **1. IPv4 Address Space Limitation**
+
+* IPv4 addresses are **32-bit**, so the total number of unique addresses is about **4.3 billion**.
+* Problem: Not enough addresses for the growing number of devices on the Internet.
+* Solution in IPv4: **NAT (Network Address Translation)**
+
+  * Allows multiple devices in a local network to share a single public IP.
+  * Reduces address exhaustion but doesn’t solve the fundamental limit.
+
+---
+
+### **2. IPv6 Address Space**
+
+* IPv6 uses **128-bit addresses** → huge number of addresses (~3.4×10³⁸).
+* This removes the need for NAT in most cases.
+* IPv6 is **not just about more addresses**; it also improves design and efficiency.
+
+---
+
+### **3. IPv6 Header vs IPv4 Header**
+
+| Feature     | IPv4                                      | IPv6                                 |
+| ----------- | ----------------------------------------- | ------------------------------------ |
+| Header size | Variable (20–60 bytes)                    | Fixed (40 bytes)                     |
+| Options     | IP options included in header             | Uses **extension headers** instead   |
+| Performance | Processing IP options is complex and slow | Extension headers are more efficient |
+
+* **Key idea:** IPv6 simplifies header processing, improving performance.
+
+---
+
+### **4. ICMP Changes in IPv6**
+
+* **IPv4 ICMP** → Mainly for error reporting and informational messages.
+* **IPv6 ICMPv6** → Expanded functionality:
+
+  * **Neighbour Discovery (ND)** → find and track neighbors on the same network
+  * **Multicast Listener Discovery (MLD)** → manage multicast group membership
+  * Other control and management messages
+
+---
+
+### **5. Packet Handling in Linux**
+
+1. **Network device driver** receives packets.
+2. **Network layer** decides if the packet is IPv4 or IPv6.
+3. **Local delivery** → Packet goes to **transport layer (L4)**:
+
+   * **TCP** → Reliable, connection-oriented
+   * **UDP** → Unreliable, connectionless
+   * **SCTP** → Combines TCP and UDP features, used in LTE
+   * **DCCP** → Reliable congestion-controlled datagrams, experimental
+
+* **Key point:** IPv6 improves protocol efficiency, simplifies header processing, and expands ICMP functionality.
+
+---
+
+✅ **Summary:**
+
+* IPv4 → limited address space, variable headers, complex options, basic ICMP.
+* IPv6 → huge address space, fixed headers + extension headers, ICMPv6 with ND & MLD, better performance.
+* Transport layer → TCP, UDP, SCTP, DCCP handle packet delivery to applications.
+
+
+
+
+
+
+
+
+
+
+
+## **1. Packets Generated by the Local Host**
+
+* **Where packets are created:**
+
+  * By **Layer 4 sockets** (transport layer) like **TCP sockets** or **UDP sockets**.
+  * Created via a **userspace application** using the **Sockets API**.
+
+* **Socket types:**
+
+  * **Stream sockets** → TCP (reliable, connection-oriented)
+  * **Datagram sockets** → UDP (unreliable, connectionless)
+
+* **Kernel structures:**
+
+  * `struct socket` → interface to **userspace**
+  * `struct sock` → interface to **network layer (L3)**
+
+* **Packet flow:**
+
+  ```
+  Userspace socket → Layer 4 (TCP/UDP) → Layer 3 (IP) → Layer 2 (network device driver/Ethernet) → Transmission
+  ```
+
+* **Fragmentation:**
+
+  * If packet is too large for network MTU, **fragmentation** occurs at Layer 3.
+
+---
+
+## **2. Layer 2 (Ethernet) Addresses**
+
+* Each Ethernet interface has a **MAC address (48-bit)**.
+
+  * Usually unique, assigned by manufacturer.
+  * Can be **changed by userspace** using commands like `ifconfig` or `ip`.
+
+* **Ethernet header (14 bytes):**
+
+  * **Ethernet Type:** 2 bytes (e.g., `0x0800` for IPv4, `0x86DD` for IPv6)
+  * **Source MAC:** 6 bytes
+  * **Destination MAC:** 6 bytes
+
+* **Finding MAC address of destination:**
+
+  * **IPv4:** Uses **ARP (Address Resolution Protocol)** → broadcast request
+  * **IPv6:** Uses **NDISC (Neighbour Discovery)** → ICMPv6 multicast request
+
+---
+
+## **3. Communication between Userspace and Kernel**
+
+* **Purpose:** Configure routing, neighbor tables, IPsec policies, etc.
+* **Mechanism:** **Netlink sockets**
+
+  * Userspace tools like **iproute2** use netlink to communicate with kernel
+  * Generic netlink provides flexible communication for different subsystems
+
+---
+
+## **4. Wireless Subsystem**
+
+* Maintained **separately** from normal networking stack.
+* Features include:
+
+  * **Power Save Mode:** Stations/APs can enter sleep mode
+  * **Special topologies:** Mesh, ad-hoc networks
+
+    * Example: **HWMP (Hybrid Wireless Mesh Protocol)** → Layer 2 routing with MAC addresses
+  * **mac80211 framework** → helps wireless drivers interact with Linux kernel
+  * **Block acknowledgment (802.11n)** → improves throughput
+
+---
+
+## **5. InfiniBand and RDMA**
+
+* **InfiniBand:** High-performance network for datacenters
+* **RDMA (Remote Direct Memory Access):** Allows **direct memory access between machines**, bypassing CPU
+* Introduced in Linux **kernel 2.6.11**
+
+---
+
+## **6. Virtualization**
+
+* **Hardware virtualization:** VT-x (Intel), AMD-V (AMD) → efficient full virtualization
+* **Process virtualization:** Implemented via **Linux namespaces**
+
+  * 6 namespaces currently, used by **Linux Containers (LXC)** and **CRIU**
+  * System calls: `unshare()`, `setns()`
+  * Flags: `CLONE_*` flags for namespaces
+
+---
+
+## **7. Other Subsystems and IoT**
+
+* **Bluetooth** → Chapter 14
+* **PCI devices** → many network drivers are PCI
+* **IEEE 802.15.4** → low-power networks, used for **IoT** devices
+* **IPv6 over Low Power WPAN (6LoWPAN):**
+
+  * Uses IPv6 for small, low-power devices
+  * Requires adapting **Neighbour Discovery** for sleep modes
+* Other advanced topics: **NFC, cgroups, Android, etc.**
+
+---
+
+## ✅ **Summary**
+
+1. **Packet creation:** From userspace socket → L4 → L3 → L2 → transmission
+2. **Ethernet:** MAC address identifies devices; ARP/NDISC maps IP → MAC
+3. **Kernel ↔ Userspace communication:** Netlink sockets
+4. **Wireless:** Separate subsystem with special protocols like HWMP and power-saving
+5. **High-performance networking:** InfiniBand + RDMA
+6. **Virtualization:** Hardware (VT-x, AMD-V) + namespaces (process-level virtualization)
+7. **IoT / Low-power networks:** IPv6 + 6LoWPAN for small devices, adaptation for sleep mode
+
+
+
